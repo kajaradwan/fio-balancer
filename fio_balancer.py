@@ -103,37 +103,31 @@ class FioBalancer:
         output_dir = os.path.join(mount_point, "fio", self.current_host)
         os.makedirs(output_dir, exist_ok=True)
 
-        # Calculate threads per mount point to achieve ~8192 total threads
-        # 8192 threads / 13 hosts / 8 mount points = ~79 threads per mount point
-        threads_per_mount = 79
+        # Use the total_threads parameter directly
+        threads_per_mount = self.total_threads
 
-        config = {
-            "global": {
-                "ioengine": "libaio",
-                "direct": 1,
-                "size": "1g",
-                "runtime": 60,
-                "time_based": 1,
-                "group_reporting": 1,
-                "numa_mem_policy": "local",
-                "numjobs": threads_per_mount,
-                "iodepth": 16,
-                "bs": "2m"
-            },
-            "jobs": [
-                {
-                    "name": "testSequentialReads",
-                    "rw": "randread",
-                    "opendir": output_dir
-                },
-                {
-                    "name": "testSequentialWrites",
-                    "rw": "randwrite",
-                    "opendir": output_dir
-                }
-            ]
-        }
-        return json.dumps(config, indent=2)
+        # Generate INI format configuration
+        config = f"""[global]
+ioengine=libaio
+direct=1
+size=1g
+runtime=60
+time_based=1
+group_reporting=1
+numa_mem_policy=local
+numjobs={threads_per_mount}
+iodepth=16
+bs=2m
+
+[testSequentialReads]
+rw=randread
+directory={output_dir}
+
+[testSequentialWrites]
+rw=randwrite
+directory={output_dir}
+"""
+        return config
 
     def run(self):
         """Run FIO tests for this host's IPs."""
@@ -151,7 +145,7 @@ class FioBalancer:
                 config = self._generate_fio_config(mount_point)
                 
                 # Create config file
-                config_file = f"/tmp/fio_config_{ip}.json"
+                config_file = f"/tmp/fio_config_{ip}.ini"
                 with open(config_file, 'w') as f:
                     f.write(config)
                 
@@ -168,9 +162,20 @@ class FioBalancer:
             self._unmount_all()
 
 def main():
-    parser = argparse.ArgumentParser(description='Run FIO tests on this host')
-    parser.add_argument('--hosts', nargs='+', required=True, help='List of all hostnames')
-    parser.add_argument('--ips', nargs='+', required=True, help='List of all IP addresses')
+    parser = argparse.ArgumentParser(
+        description='Run FIO tests on this host',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Example usage:
+  # Using command line arguments:
+  python3 fio_balancer.py --hosts host1 host2 --ips 10.0.2.64 10.0.2.65 --total-threads 1
+
+  # Using config file:
+  python3 fio_balancer.py --config config.yaml
+"""
+    )
+    parser.add_argument('--hosts', nargs='+', help='List of all hostnames')
+    parser.add_argument('--ips', nargs='+', help='List of all IP addresses')
     parser.add_argument('--mount-base', default='/mnt', help='Base mount point directory')
     parser.add_argument('--total-threads', type=int, default=8192, help='Total number of threads to distribute (default: 8192)')
     parser.add_argument('--config', help='YAML configuration file (alternative to command line arguments)')
@@ -178,12 +183,26 @@ def main():
     args = parser.parse_args()
     
     if args.config:
-        with open(args.config, 'r') as f:
-            config = yaml.safe_load(f)
-            hosts = config['hosts']
-            ips = config['ip_addresses']
-            mount_base = config.get('mount_base', '/mnt')
+        try:
+            with open(args.config, 'r') as f:
+                config = yaml.safe_load(f)
+                hosts = config['hosts']
+                ips = config['ip_addresses']
+                mount_base = config.get('mount_base', '/mnt')
+        except FileNotFoundError:
+            print(f"Error: Config file '{args.config}' not found")
+            return
+        except yaml.YAMLError as e:
+            print(f"Error: Invalid YAML in config file: {e}")
+            return
+        except KeyError as e:
+            print(f"Error: Missing required field '{e}' in config file")
+            return
     else:
+        if not args.hosts or not args.ips:
+            print("Error: Either --config or both --hosts and --ips must be provided")
+            parser.print_help()
+            return
         hosts = args.hosts
         ips = args.ips
         mount_base = args.mount_base
