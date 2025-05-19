@@ -50,6 +50,7 @@ class FioBalancer:
         # Check if already mounted
         if os.path.ismount(mount_point):
             print(f"Mount point {mount_point} is already mounted")
+            self.mounted_points.add(mount_point)  # Add to set even if already mounted
             return True
             
         # Mount the IP with specific share
@@ -67,11 +68,14 @@ class FioBalancer:
         """Unmount a single mount point."""
         if not os.path.ismount(mount_point):
             print(f"Mount point {mount_point} is not mounted")
+            if mount_point in self.mounted_points:
+                self.mounted_points.remove(mount_point)
             return True
             
         try:
             subprocess.run(f"umount {mount_point}", shell=True, check=True)
-            self.mounted_points.remove(mount_point)
+            if mount_point in self.mounted_points:
+                self.mounted_points.remove(mount_point)
             print(f"Successfully unmounted {mount_point}")
             return True
         except subprocess.CalledProcessError as e:
@@ -119,11 +123,11 @@ numjobs={threads_per_mount}
 iodepth=16
 bs=2m
 
-[testSequentialReads]
+[read]
 rw=randread
 directory={output_dir}
 
-[testSequentialWrites]
+[write]
 rw=randwrite
 directory={output_dir}
 """
@@ -149,12 +153,21 @@ directory={output_dir}
                 with open(config_file, 'w') as f:
                     f.write(config)
                 
-                # Run FIO
-                cmd = f"fio {config_file}"
+                # Run FIO write test first
+                write_cmd = f"fio --section=write {config_file}"
                 try:
-                    subprocess.run(cmd, shell=True, check=True)
+                    print("\nRunning write test...")
+                    subprocess.run(write_cmd, shell=True, check=True)
                 except subprocess.CalledProcessError as e:
-                    print(f"Error running FIO on {self.current_host} for {ip}: {e}")
+                    print(f"Error running FIO write test on {self.current_host} for {ip}: {e}")
+                
+                # Then run FIO read test
+                read_cmd = f"fio --section=read {config_file}"
+                try:
+                    print("\nRunning read test...")
+                    subprocess.run(read_cmd, shell=True, check=True)
+                except subprocess.CalledProcessError as e:
+                    print(f"Error running FIO read test on {self.current_host} for {ip}: {e}")
                 finally:
                     os.remove(config_file)
         finally:
