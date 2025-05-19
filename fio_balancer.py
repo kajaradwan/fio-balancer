@@ -9,7 +9,7 @@ import yaml
 import socket
 
 class FioBalancer:
-    def __init__(self, hosts: List[str], ip_addresses: List[str], mount_base: str = "/mnt"):
+    def __init__(self, hosts: List[str], ip_addresses: List[str], mount_base: str = "/mnt", total_threads: int = 8192):
         self.hosts = hosts
         self.ip_addresses = ip_addresses
         self.mount_base = mount_base
@@ -21,6 +21,8 @@ class FioBalancer:
         
         # Calculate which IPs belong to this host
         self.host_ips = self._get_host_ips()
+
+        self.total_threads = total_threads
 
     def _get_host_ips(self) -> List[str]:
         """Get the IPs that belong to the current host."""
@@ -170,6 +172,7 @@ def main():
     parser.add_argument('--hosts', nargs='+', required=True, help='List of all hostnames')
     parser.add_argument('--ips', nargs='+', required=True, help='List of all IP addresses')
     parser.add_argument('--mount-base', default='/mnt', help='Base mount point directory')
+    parser.add_argument('--total-threads', type=int, default=8192, help='Total number of threads to distribute (default: 8192)')
     parser.add_argument('--config', help='YAML configuration file (alternative to command line arguments)')
     
     args = parser.parse_args()
@@ -185,7 +188,12 @@ def main():
         ips = args.ips
         mount_base = args.mount_base
 
-    balancer = FioBalancer(hosts, ips, mount_base)
+    balancer = FioBalancer(
+        hosts=hosts,
+        ip_addresses=ips,
+        mount_base=mount_base,
+        total_threads=args.total_threads
+    )
     balancer.run()
 
 if __name__ == '__main__':
